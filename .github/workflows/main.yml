@@ -1,0 +1,82 @@
+
+name: Build Block World DMG
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        run: |
+          ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+
+          mkdir extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+          PROJECT_FILE=$(find extracted -name project.yml -print -quit)
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERROR: project.yml not found in ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          cp -R "$PROJECT_DIR/." ./build_project/
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: build_project
+        run: xcodegen generate
+
+      - name: Build macOS application
+        working-directory: build_project
+        run: |
+          xcodebuild \
+            -project BlockWorld.xcodeproj \
+            -scheme BlockWorld \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Create DMG installer
+        working-directory: build_project
+        run: |
+          mkdir -p dmg_contents
+          cp -R build/Build/Products/Release/BlockWorld.app dmg_contents/
+          ln -s /Applications dmg_contents/Applications
+
+          hdiutil create \
+            -volname "Block World" \
+            -srcfolder dmg_contents \
+            -ov \
+            -format UDZO \
+            BlockWorld.dmg
+
+      - name: Upload finished DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockWorld-macOS-DMG
+          path: build_project/BlockWorld.dmg
+          if-no-files-found: error
+          retention-days: 14
